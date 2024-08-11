@@ -2,12 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const axios = require('axios');
+const { execSync } = require('child_process'); // 引入用于删除文件夹的模块
 
 // 获取 IP 和端口
 const fetchProxyDetails = async () => {
   try {
-    const response = await axios.get('http://api1.ydaili.cn/tools/BUnlimitedApi.ashx?key=8B4B350B49A764E6FF073D763761FB65&action=BUnlimited&qty=1&orderNum=SH20240601153533558&isp=&format=txt');
-    const proxyDetails = response.data.trim(); // 处理响应数据
+    const response = await axios.get('http://api1.ydaili.cn/tools/BUnlimitedApi.ashx?key=4E3B0A65376067C2441B0976304896DF6F21FAFF1F5B552B&action=BUnlimited&qty=1&orderNum=SH20240810100511102&isp=&format=txt');
+    var proxyDetails = response.data.trim(); // 处理响应数据
     const [ip, port] = proxyDetails.split(':'); // 假设 IP 和端口用冒号分隔
     return { ip, port };
   } catch (error) {
@@ -39,9 +40,10 @@ const modifyJsonEntry = (filePath, ip, port, index, jsonData) => {
     const workerId = user.id; // 使用用户的 id 作为 workerId
 
     user.proxy.mode = 2;
-    user.proxy.protocol = 'http';
+    user.proxy.protocol = 'HTTP';
     user.proxy.host = ip;
     user.proxy.port = port;
+    user.proxy.url = 'http://'+ip+':'+port
 
     fs.writeFileSync(filePath, JSON.stringify(jsonData, null, 2), 'utf8');
 
@@ -53,7 +55,7 @@ const modifyJsonEntry = (filePath, ip, port, index, jsonData) => {
   }
 };
 
-// 删除 JSON 条目
+// 删除 JSON 条目和对应的缓存文件夹
 const deleteJsonEntry = (filePath, index, jsonData) => {
   try {
     if (index < 0 || index >= jsonData.users.length) {
@@ -61,12 +63,21 @@ const deleteJsonEntry = (filePath, index, jsonData) => {
       return;
     }
 
+    const user = jsonData.users[index];
+    const workerId = user.id;
     jsonData.users.splice(index, 1);
 
     fs.writeFileSync(filePath, JSON.stringify(jsonData, null, 2), 'utf8');
     console.log(`Deleted entry at index ${index} successfully.`);
+
+    // 删除对应的缓存文件夹
+    const cachePath = path.join('C:\\Users\\sunxianhao\\AppData\\Local\\VirtualBrowser\\Workers', workerId.toString());
+    if (fs.existsSync(cachePath)) {
+      execSync(`rmdir /s /q "${cachePath}"`);
+      console.log(`Deleted cache folder for workerId ${workerId}.`);
+    }
   } catch (err) {
-    console.error('Error deleting JSON entry:', err);
+    console.error('Error deleting JSON entry or cache folder:', err);
   }
 };
 
@@ -75,9 +86,9 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 (async () => {
   const filePath = path.join(process.env.localappdata, 'VirtualBrowser', 'User Data', 'virtual.dat');
-  const maxWindows = 30; // 要保持的浏览器窗口数量
-  const viewportWidth = 1280; // 设置窗口宽度
-  const viewportHeight = 800; // 设置窗口高度
+  const maxWindows = 20; // 要保持的浏览器窗口数量
+  const viewportWidth = 400; // 设置窗口宽度
+  const viewportHeight = 250; // 设置窗口高度
   let currentIndex = 0;  // 当前处理的 JSON 条目索引
 
   // 存储正在运行的浏览器实例
@@ -86,11 +97,16 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const startBrowser = async (workerId, index) => {
     const { ip, port } = await fetchProxyDetails(); // 每次启动前获取新的 IP 和端口
 
+    console.log(`Starting browser with workerId ${workerId} using proxy ${ip}:${port}.`);
+
     const browser = await chromium.launchPersistentContext(
       `${process.env.localappdata}\\VirtualBrowser\\Workers\\${workerId}`,
       {
-        executablePath: 'D:\\Program Files\\vb\\VirtualBrowser\\VirtualBrowser\\120.0.6099.62\\VirtualBrowser.exe',
-        args: [`--worker-id=${workerId}`],
+        executablePath: 'C:\\Program Files\\VirtualBrowser\\VirtualBrowser\\120.0.6099.62\\VirtualBrowser.exe',
+        args: [
+          `--worker-id=${workerId}`,
+          `--proxy-server=http=${ip}:${port}`
+        ],
         headless: false,
         defaultViewport: null,
       }
@@ -100,7 +116,12 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
     const page = await browser.newPage();
     await page.setViewportSize({ width: viewportWidth, height: viewportHeight });
-    await page.goto('https://www.baidu.com');
+    
+    try {
+      await page.goto('http://www.topgglm.com/c.php?id=235', { waitUntil: 'load', timeout: 60000 });
+    } catch (error) {
+      console.error(`Error navigating to page for workerId ${workerId}:`, error);
+    }
 
     // 等待 1 分钟
     await delay(60000);
@@ -125,10 +146,13 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
       }
     }
   };
+  
+  jsonData = readJsonFile(filePath);
 
   // 启动初始的 30 个浏览器窗口
   for (let i = 0; i < maxWindows; i++) {
-    const result = modifyJsonEntry(filePath, await fetchProxyDetails(), port, currentIndex, jsonData);
+    const { ip, port } = await fetchProxyDetails();
+    const result = modifyJsonEntry(filePath, ip, port, currentIndex, jsonData);
     if (result) {
       const { workerId, index } = result;
       currentIndex = index + 1; // 更新索引
